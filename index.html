@@ -39,6 +39,8 @@
         button:hover:not(:disabled), .btn:hover { background-color: #004494; }
         button:disabled { background-color: #a0c4e8; cursor: not-allowed; }
         
+        .icon-btn { flex-grow: 0; padding: 10px 15px; font-size: 16px; }
+
         #record-btn { background-color: #dc3545; }
         #record-btn:hover:not(:disabled) { background-color: #b02a37; }
         #record-btn.recording { animation: pulse-red 1.5s infinite; }
@@ -173,6 +175,8 @@
             </div>
 
             <div class="button-row">
+                <button id="jump-back-btn" class="icon-btn" title="Jump Back 1 Beat" disabled>⏪</button>
+                <button id="jump-forward-btn" class="icon-btn" title="Jump Forward 1 Beat" disabled>⏩</button>
                 <button id="play-pause-btn" disabled>Play Piano</button>
                 <button id="record-btn" disabled>🎤 Record</button>
                 <button id="record-with-piano-btn" disabled>🎹 Record with Piano</button>
@@ -193,6 +197,8 @@
     <script src="music-list.js"></script>
 
     <script>
+        // FIXED: Removed the duplicate hardcoded availableMusicFiles array
+
         window.beatsPerBar = 4;
         window.currentCursorBeat = 0;
         window.isCursorActive = false;
@@ -211,6 +217,8 @@
 
         window.fullScoreData = [];
         window.fullRecordedData = [];
+        
+        window.recordingStartAudioTime = 0;
 
         const countdownOverlay = document.getElementById('countdown-overlay');
         const startBarInput = document.getElementById('start-bar-input');
@@ -219,6 +227,8 @@
         const countdownInput = document.getElementById('countdown-input');
         const lyricsCheckbox = document.getElementById('lyrics-checkbox');
         const playPauseBtn = document.getElementById('play-pause-btn');
+        const jumpBackBtn = document.getElementById('jump-back-btn');
+        const jumpForwardBtn = document.getElementById('jump-forward-btn');
         const partSelect = document.getElementById('part-select');
         const musicSelect = document.getElementById('music-select');
         const fileInput = document.getElementById('file-input');
@@ -227,6 +237,7 @@
         let alphaTabNotesIndex = [];
         let currentlyHoveredNoteIndex = null;
 
+        // Initialize from the external music-list.js
         if (typeof availableMusicFiles !== 'undefined') {
             availableMusicFiles.forEach(fileName => {
                 const opt = document.createElement('option');
@@ -236,6 +247,7 @@
             });
         } else {
             console.error("music-list.js failed to load or is missing the availableMusicFiles array.");
+            statusText.innerText = "Error: Cannot load music list. Check music-list.js";
         }
         
         const customOpt = document.createElement('option');
@@ -255,7 +267,6 @@
             updateChartWindow();
         });
 
-        // FIXED: Using parseFloat instead of parseInt for dynamic fractional beats
         function syncBarInputs() {
             let s = parseFloat(startBarInput.value);
             let e = parseFloat(endBarInput.value);
@@ -275,7 +286,7 @@
             window.loopStartBar = s;
             window.loopEndBar = e;
             
-            window.currentStartBar = s - 1;
+            window.currentStartBar = Math.floor(s - 1);
             updateChartWindow();
         }
 
@@ -289,6 +300,39 @@
             }
             return '';
         }
+
+        function jumpByBeats(beats) {
+            const startOffsetBeats = (window.loopStartBar - 1) * window.beatsPerBar;
+            const endBeat = window.loopEndBar * window.beatsPerBar;
+            const beatsPerSecond = window.currentBPM / 60;
+            
+            let newBeat = window.currentCursorBeat + beats;
+            
+            if (newBeat < startOffsetBeats) newBeat = startOffsetBeats;
+            if (newBeat > endBeat) newBeat = endBeat;
+            
+            window.currentCursorBeat = newBeat;
+            
+            if (isRecording) {
+                window.recordingStartAudioTime = audioContext.currentTime - ((newBeat - startOffsetBeats) / beatsPerSecond);
+            } else {
+                api.tickPosition = Math.round(newBeat * 960);
+                
+                if (recordedAudio.src && recordedAudio.readyState >= 1) {
+                    let newTime = (newBeat - startOffsetBeats) / beatsPerSecond;
+                    if (newTime < 0) newTime = 0;
+                    if (newTime > recordedAudio.duration) newTime = recordedAudio.duration;
+                    recordedAudio.currentTime = newTime;
+                }
+            }
+            
+            autoFollowCursor();
+            updateCursor();
+            pitchChart.update('none');
+        }
+
+        jumpBackBtn.addEventListener('click', () => jumpByBeats(-1));
+        jumpForwardBtn.addEventListener('click', () => jumpByBeats(1));
 
         function updateCursor() {
             const cursorEl = document.getElementById('playback-cursor');
@@ -380,7 +424,6 @@
             if (changed) updateChartWindow();
         }
 
-        // --- 1. GRAPH SETUP & CUSTOM PLUGINS ---
         const regionShadingPlugin = {
             id: 'regionShading',
             beforeDraw: (chart) => {
@@ -576,7 +619,6 @@
             }
         });
 
-        // --- SWIPE & KEYBOARD NAVIGATION ---
         let dragStartX = 0;
         let dragStartY = 0;
         let isDragging = false;
@@ -635,7 +677,6 @@
             }
         });
 
-        // --- 2. MUSICXML CUSTOM PARSER ---
         function extractParts(xmlString) {
             const parser = new DOMParser();
             const xmlDoc = parser.parseFromString(xmlString, "text/xml");
@@ -817,13 +858,14 @@
             document.getElementById('play-pause-btn').disabled = false;
             document.getElementById('record-btn').disabled = false;
             document.getElementById('record-with-piano-btn').disabled = false;
+            document.getElementById('jump-back-btn').disabled = false;
+            document.getElementById('jump-forward-btn').disabled = false;
             
             statusText.innerText = `Score plotted! Total length: ${window.totalBars} bars.`;
             
             api.load(uint8Array);
         }
 
-        // --- 3. ALPHATAB AUDIO ENGINE (PLAYBACK TRACKING) ---
         const settings = {
             player: {
                 enablePlayer: true,
@@ -895,7 +937,7 @@
             window.isCursorActive = false;
             api.stop(); 
             window.currentCursorBeat = (window.loopStartBar - 1) * window.beatsPerBar;
-            window.currentStartBar = window.loopStartBar - 1;
+            window.currentStartBar = Math.floor(window.loopStartBar - 1);
             updateChartWindow();
             updateCursor();
         });
@@ -948,7 +990,7 @@
                 const endBeat = window.loopEndBar * window.beatsPerBar;
                 
                 if (window.currentCursorBeat < startOffsetBeats || window.currentCursorBeat >= endBeat) {
-                    api.tickPosition = Math.round(startOffsetBeats * 960); // FIXED: Added Math.round for exact precision
+                    api.tickPosition = Math.round(startOffsetBeats * 960); 
                     window.currentCursorBeat = startOffsetBeats;
                 } else {
                     api.tickPosition = Math.round(window.currentCursorBeat * 960); 
@@ -990,7 +1032,6 @@
             }
         });
 
-        // --- 4. MICROPHONE RECORDING & PLAYBACK TRACKING ---
         let audioContext, analyser, microphone;
         let isRecording = false;
         let recordingInterval;
@@ -1044,7 +1085,7 @@
             playRecordingBtn.innerText = '▶ Play Recording';
             window.isCursorActive = false;
             window.currentCursorBeat = (window.loopStartBar - 1) * window.beatsPerBar;
-            window.currentStartBar = window.loopStartBar - 1;
+            window.currentStartBar = Math.floor(window.loopStartBar - 1);
             updateChartWindow();
             cancelAnimationFrame(playbackAnimationId);
         });
@@ -1127,7 +1168,7 @@
                 
                 statusText.innerText = "Recording finished. You can now play it back.";
                 
-                window.currentStartBar = window.loopStartBar - 1;
+                window.currentStartBar = Math.floor(window.loopStartBar - 1);
                 updateChartWindow();
                 
                 return;
@@ -1144,7 +1185,7 @@
                 const endBeat = window.loopEndBar * window.beatsPerBar;
 
                 window.currentCursorBeat = startOffsetBeats;
-                window.currentStartBar = window.loopStartBar - 1;
+                window.currentStartBar = Math.floor(window.loopStartBar - 1);
                 
                 window.fullRecordedData = [];
                 updateChartWindow();
@@ -1193,7 +1234,7 @@
                     statusText.innerText = "Listening... Play along!";
 
                     api.stop(); 
-                    api.tickPosition = Math.round(startOffsetBeats * 960); // FIXED: Protected from floating point desync
+                    api.tickPosition = Math.round(startOffsetBeats * 960); 
                     
                     if (withPiano) {
                         api.play();
@@ -1201,7 +1242,8 @@
 
                     mediaRecorder.start();
                     const buffer = new Float32Array(analyser.fftSize);
-                    const startAudioTime = audioContext.currentTime;
+                    
+                    window.recordingStartAudioTime = audioContext.currentTime;
                     const beatsPerSecond = window.currentBPM / 60;
                     let lastChartUpdate = performance.now();
 
@@ -1213,7 +1255,7 @@
                         
                         const freq = autoCorrelate(buffer, audioContext.sampleRate);
                         
-                        window.currentCursorBeat = startOffsetBeats + ((audioContext.currentTime - startAudioTime) * beatsPerSecond); 
+                        window.currentCursorBeat = startOffsetBeats + ((audioContext.currentTime - window.recordingStartAudioTime) * beatsPerSecond); 
                         
                         autoFollowCursor();
                         updateCursor(); 
