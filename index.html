@@ -189,15 +189,9 @@
         <div id="hidden-audio-player"></div>
     </div>
 
-    <script>
-        const availableMusicFiles = [
-            "because-of-you.xml",
-            "man-i-need.xml",
-            "together-intro.xml",
-            "when-we-rise.xml",
-            "when-you-want.xml"
-        ];
+    <script src="music-list.js"></script>
 
+    <script>
         window.beatsPerBar = 4;
         window.currentCursorBeat = 0;
         window.isCursorActive = false;
@@ -232,12 +226,18 @@
         let alphaTabNotesIndex = [];
         let currentlyHoveredNoteIndex = null;
 
-        availableMusicFiles.forEach(fileName => {
-            const opt = document.createElement('option');
-            opt.value = fileName; 
-            opt.textContent = fileName.replace('.xml', ''); 
-            musicSelect.appendChild(opt);
-        });
+        // Check if availableMusicFiles loaded successfully from music-list.js
+        if (typeof availableMusicFiles !== 'undefined') {
+            availableMusicFiles.forEach(fileName => {
+                const opt = document.createElement('option');
+                opt.value = fileName; 
+                opt.textContent = fileName.replace('.xml', ''); 
+                musicSelect.appendChild(opt);
+            });
+        } else {
+            console.error("music-list.js failed to load or is missing the availableMusicFiles array.");
+        }
+        
         const customOpt = document.createElement('option');
         customOpt.value = 'custom';
         customOpt.textContent = 'custom'; 
@@ -890,7 +890,6 @@
             applyTrackSelection(score, currentTrackIndex);
         });
 
-        // FIXED: Handle native track end events to prevent sticking
         api.playerFinished.on(() => {
             window.isCursorActive = false;
             api.stop(); 
@@ -925,7 +924,7 @@
                 
                 const endBeat = window.loopEndBar * window.beatsPerBar;
                 if (window.currentCursorBeat >= endBeat) {
-                    api.stop(); // FIXED: Hard stop to kill oscillators
+                    api.stop(); 
                     window.currentCursorBeat = (window.loopStartBar - 1) * window.beatsPerBar;
                 }
                 
@@ -951,7 +950,6 @@
                     api.tickPosition = startOffsetBeats * 960;
                     window.currentCursorBeat = startOffsetBeats;
                 } else {
-                    // FIXED: Re-sync AlphaTab's internal clock in case api.stop() reset it to 0
                     api.tickPosition = window.currentCursorBeat * 960; 
                 }
                 api.play();
