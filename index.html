@@ -18,6 +18,7 @@
             margin: 0; padding: 15px; background-color: #f0f2f5; color: #333;
         }
         .container { max-width: 1000px; margin: 0 auto; width: 100%; }
+        
         .toolbar {
             background: #ffffff; padding: 15px; border-radius: 8px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 20px;
@@ -148,9 +149,9 @@
                 
                 <div class="bar-controls">
                     <label>Bars</label>
-                    <input type="number" id="start-bar-input" value="1" min="1" disabled>
+                    <input type="number" id="start-bar-input" value="1" min="1" step="0.25" disabled>
                     <span>to</span>
-                    <input type="number" id="end-bar-input" value="1" min="1" disabled>
+                    <input type="number" id="end-bar-input" value="1" min="1" step="0.25" disabled>
                 </div>
 
                 <div class="bar-controls">
@@ -226,7 +227,6 @@
         let alphaTabNotesIndex = [];
         let currentlyHoveredNoteIndex = null;
 
-        // Check if availableMusicFiles loaded successfully from music-list.js
         if (typeof availableMusicFiles !== 'undefined') {
             availableMusicFiles.forEach(fileName => {
                 const opt = document.createElement('option');
@@ -255,9 +255,10 @@
             updateChartWindow();
         });
 
+        // FIXED: Using parseFloat instead of parseInt for dynamic fractional beats
         function syncBarInputs() {
-            let s = parseInt(startBarInput.value);
-            let e = parseInt(endBarInput.value);
+            let s = parseFloat(startBarInput.value);
+            let e = parseFloat(endBarInput.value);
             
             if (isNaN(s) || s < 1) s = 1;
             if (isNaN(e) || e < 1) e = 1;
@@ -947,10 +948,10 @@
                 const endBeat = window.loopEndBar * window.beatsPerBar;
                 
                 if (window.currentCursorBeat < startOffsetBeats || window.currentCursorBeat >= endBeat) {
-                    api.tickPosition = startOffsetBeats * 960;
+                    api.tickPosition = Math.round(startOffsetBeats * 960); // FIXED: Added Math.round for exact precision
                     window.currentCursorBeat = startOffsetBeats;
                 } else {
-                    api.tickPosition = window.currentCursorBeat * 960; 
+                    api.tickPosition = Math.round(window.currentCursorBeat * 960); 
                 }
                 api.play();
             }
@@ -1192,7 +1193,7 @@
                     statusText.innerText = "Listening... Play along!";
 
                     api.stop(); 
-                    api.tickPosition = startOffsetBeats * 960;
+                    api.tickPosition = Math.round(startOffsetBeats * 960); // FIXED: Protected from floating point desync
                     
                     if (withPiano) {
                         api.play();
