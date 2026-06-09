@@ -166,6 +166,11 @@
                     <input type="number" id="countdown-input" value="4" min="0">
                 </div>
 
+                <div class="bar-controls">
+                    <label>BPM:</label>
+                    <input type="number" id="bpm-input" value="120" min="1">
+                </div>
+
                 <div class="checkbox-control">
                     <input type="checkbox" id="lyrics-checkbox" checked>
                     <label for="lyrics-checkbox">Lyrics</label>
@@ -197,13 +202,15 @@
     <script src="music-list.js"></script>
 
     <script>
-        // FIXED: Removed the duplicate hardcoded availableMusicFiles array
-
         window.beatsPerBar = 4;
         window.currentCursorBeat = 0;
         window.isCursorActive = false;
         window.totalBeats = 0; 
-        window.currentBPM = 120;
+        
+        // --- NEW: Audio Scaling State ---
+        window.baseBPM = 120;       // Original tempo of the XML
+        window.currentBPM = 120;    // Currently selected tempo
+        window.recordingBPM = 120;  // Tempo used when the active recording was created
         
         window.globalXmlString = null;
         let currentTrackIndex = 0;
@@ -225,6 +232,7 @@
         const endBarInput = document.getElementById('end-bar-input');
         const maxBarsInput = document.getElementById('max-bars-input');
         const countdownInput = document.getElementById('countdown-input');
+        const bpmInput = document.getElementById('bpm-input'); // NEW
         const lyricsCheckbox = document.getElementById('lyrics-checkbox');
         const playPauseBtn = document.getElementById('play-pause-btn');
         const jumpBackBtn = document.getElementById('jump-back-btn');
@@ -237,7 +245,6 @@
         let alphaTabNotesIndex = [];
         let currentlyHoveredNoteIndex = null;
 
-        // Initialize from the external music-list.js
         if (typeof availableMusicFiles !== 'undefined') {
             availableMusicFiles.forEach(fileName => {
                 const opt = document.createElement('option');
@@ -247,7 +254,6 @@
             });
         } else {
             console.error("music-list.js failed to load or is missing the availableMusicFiles array.");
-            statusText.innerText = "Error: Cannot load music list. Check music-list.js";
         }
         
         const customOpt = document.createElement('option');
@@ -265,6 +271,24 @@
             e.target.value = val;
             window.visibleBars = val;
             updateChartWindow();
+        });
+
+        // --- NEW: BPM Controller & Audio Scaler ---
+        bpmInput.addEventListener('change', (e) => {
+            let val = parseInt(e.target.value);
+            if (isNaN(val) || val < 1) val = window.baseBPM;
+            e.target.value = val;
+            window.currentBPM = val;
+            
+            // Adjust the synthesizer speed relative to the base tempo
+            if (window.baseBPM > 0) {
+                api.playbackSpeed = window.currentBPM / window.baseBPM;
+            }
+            
+            // Adjust the active recording HTML playback rate dynamically
+            if (window.recordingBPM > 0 && recordedAudio && recordedAudio.src) {
+                recordedAudio.playbackRate = window.currentBPM / window.recordingBPM;
+            }
         });
 
         function syncBarInputs() {
@@ -304,7 +328,6 @@
         function jumpByBeats(beats) {
             const startOffsetBeats = (window.loopStartBar - 1) * window.beatsPerBar;
             const endBeat = window.loopEndBar * window.beatsPerBar;
-            const beatsPerSecond = window.currentBPM / 60;
             
             let newBeat = window.currentCursorBeat + beats;
             
@@ -314,12 +337,14 @@
             window.currentCursorBeat = newBeat;
             
             if (isRecording) {
-                window.recordingStartAudioTime = audioContext.currentTime - ((newBeat - startOffsetBeats) / beatsPerSecond);
+                const liveBeatsPerSecond = window.currentBPM / 60;
+                window.recordingStartAudioTime = audioContext.currentTime - ((newBeat - startOffsetBeats) / liveBeatsPerSecond);
             } else {
                 api.tickPosition = Math.round(newBeat * 960);
                 
                 if (recordedAudio.src && recordedAudio.readyState >= 1) {
-                    let newTime = (newBeat - startOffsetBeats) / beatsPerSecond;
+                    const recordedBeatsPerSecond = window.recordingBPM / 60;
+                    let newTime = (newBeat - startOffsetBeats) / recordedBeatsPerSecond;
                     if (newTime < 0) newTime = 0;
                     if (newTime > recordedAudio.duration) newTime = recordedAudio.duration;
                     recordedAudio.currentTime = newTime;
@@ -424,6 +449,7 @@
             if (changed) updateChartWindow();
         }
 
+        // --- 1. GRAPH SETUP & CUSTOM PLUGINS ---
         const regionShadingPlugin = {
             id: 'regionShading',
             beforeDraw: (chart) => {
@@ -619,6 +645,7 @@
             }
         });
 
+        // --- SWIPE & KEYBOARD NAVIGATION ---
         let dragStartX = 0;
         let dragStartY = 0;
         let isDragging = false;
@@ -677,6 +704,7 @@
             }
         });
 
+        // --- 2. MUSICXML CUSTOM PARSER ---
         function extractParts(xmlString) {
             const parser = new DOMParser();
             const xmlDoc = parser.parseFromString(xmlString, "text/xml");
@@ -848,6 +876,11 @@
             startBarInput.disabled = false;
             endBarInput.disabled = false;
             
+            // Sync BPM tracking elements
+            window.baseBPM = window.currentBPM;
+            bpmInput.value = window.currentBPM;
+            api.playbackSpeed = 1.0;
+            
             window.currentStartBar = 0;
 
             pitchChart.options.scales.y.min = parsed.yMin;
@@ -866,6 +899,7 @@
             api.load(uint8Array);
         }
 
+        // --- 3. ALPHATAB AUDIO ENGINE (PLAYBACK TRACKING) ---
         const settings = {
             player: {
                 enablePlayer: true,
@@ -1032,6 +1066,7 @@
             }
         });
 
+        // --- 4. MICROPHONE RECORDING & PLAYBACK TRACKING ---
         let audioContext, analyser, microphone;
         let isRecording = false;
         let recordingInterval;
@@ -1047,7 +1082,7 @@
 
         function animatePlaybackCursor() {
             if (!recordedAudio.paused && !isRecording) {
-                const beatsPerSecond = window.currentBPM / 60;
+                const beatsPerSecond = window.recordingBPM / 60; // Use the tempo it was recorded at
                 const startOffsetBeats = (window.loopStartBar - 1) * window.beatsPerBar;
                 window.currentCursorBeat = startOffsetBeats + recordedAudio.currentTime * beatsPerSecond;
                 
@@ -1099,9 +1134,12 @@
                     recordedAudio.currentTime = 0;
                     window.currentCursorBeat = startOffsetBeats;
                 } else {
-                    const beatsPerSecond = window.currentBPM / 60;
+                    const beatsPerSecond = window.recordingBPM / 60;
                     recordedAudio.currentTime = (window.currentCursorBeat - startOffsetBeats) / beatsPerSecond;
                 }
+                
+                // Adjust active audio stream to match any recent BPM changes dynamically
+                recordedAudio.playbackRate = window.currentBPM / window.recordingBPM;
                 recordedAudio.play();
             } else {
                 recordedAudio.pause();
@@ -1165,6 +1203,8 @@
                 recordWithPianoBtn.disabled = false;
 
                 playPauseBtn.disabled = false; 
+                jumpBackBtn.disabled = false;
+                jumpForwardBtn.disabled = false;
                 
                 statusText.innerText = "Recording finished. You can now play it back.";
                 
@@ -1204,6 +1244,8 @@
                 recordWithPianoBtn.disabled = true;
                 playPauseBtn.disabled = true;
                 playRecordingBtn.disabled = true; 
+                jumpBackBtn.disabled = true;
+                jumpForwardBtn.disabled = true;
                 
                 let countdownBeat = parseInt(document.getElementById('countdown-input').value);
                 if (isNaN(countdownBeat) || countdownBeat < 0) countdownBeat = 0;
@@ -1221,6 +1263,8 @@
                         const audioUrl = URL.createObjectURL(audioBlob);
                         recordedAudio.src = audioUrl; 
                         playRecordingBtn.disabled = false; 
+                        jumpBackBtn.disabled = false;
+                        jumpForwardBtn.disabled = false;
                     };
 
                     analyser = audioContext.createAnalyser();
@@ -1230,6 +1274,10 @@
                     
                     isRecording = true;
                     window.isCursorActive = true; 
+                    
+                    // Capture the active speed setting so playback matches recording conditions
+                    window.recordingBPM = window.currentBPM;
+                    recordedAudio.playbackRate = 1.0;
 
                     statusText.innerText = "Listening... Play along!";
 
@@ -1322,6 +1370,8 @@
                 recordWithPianoBtn.style.display = "inline-block";
                 recordWithPianoBtn.disabled = false;
                 playPauseBtn.disabled = false; 
+                jumpBackBtn.disabled = false;
+                jumpForwardBtn.disabled = false;
             }
         }
 
